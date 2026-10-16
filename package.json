@@ -38,9 +38,6 @@
   "engines": {
     "node": ">=20"
   },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.0"
-  },
   "repository": {
     "type": "git",
     "url": "https://github.com/Num86/dsh-functions.git"
