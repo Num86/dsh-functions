@@ -1,0 +1,6 @@
+# dsh-functions bundle patch：往 profile 里插一行，Loader 挂上这个包之后
+# dsh-client-modules 才会把它的 client.js 编进浏览器启动图。行名由 profile 自己的
+# node_modules 解析（profile package.json 里以 link: 依赖装好后即可）。
+- insert:
+    - id: functions-menu
+      name: dsh-functions

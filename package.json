@@ -1,0 +1,52 @@
+{
+  "name": "dsh-functions",
+  "version": "0.3.0",
+  "description": "功能栏：给 DSH 客户端顶端加一个「功能」标签，插件在宿主里 register 一下就能往里加一键功能",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "functions",
+    "menu",
+    "命令面板"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "test"
+  ],
+  "author": "Num86",
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Num86/dsh-functions.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Num86/dsh-functions/issues"
+  },
+  "homepage": "https://github.com/Num86/dsh-functions#readme"
+}
