@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Functions bar",
+    "description": "Adds a Functions tab to the DSH title bar where plugins register one-click actions."
+  }
+}

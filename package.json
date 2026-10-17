@@ -1,7 +1,8 @@
 {
   "name": "dsh-functions",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "功能栏：给 DSH 客户端顶端加一个「功能」标签，插件在宿主里 register 一下就能往里加一键功能",
+  "icon": "icon.svg",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -15,6 +16,7 @@
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "dsh": {
@@ -32,6 +34,8 @@
     "cordis.patch.yml",
     "README.md",
     "LICENSE",
+    "locale/*.json",
+    "icon.svg",
     "test"
   ],
   "author": "Num86",

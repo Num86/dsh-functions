@@ -294,7 +294,7 @@ export function createRegistry(ctx) {
 
 /** 这条功能要送进会话的指令。会话里的 dsh 按它干活。 */
 const LOAD_INSTRUCTION = [
-  '【功能栏 · 加载功能】请把「功能」栏里还没接上的插件功能找出来，列成编号清单让我挑，然后按你读到的 README 接进去。',
+  '【功能栏 - 加载功能】请把「功能」栏里还没接上的插件功能找出来，列成编号清单让我挑，然后按你读到的 README 接进去。',
   '',
   '背景：「功能」栏是插件 dsh-functions 提供的，它列出别的插件注册进来的一键动作。一条功能的两种加法：',
   '  1) 宿主半边（首选）：插件 inject [\'functions\']，apply 里 ctx.functions.register({ id, title, run })；',
@@ -306,6 +306,7 @@ const LOAD_INSTRUCTION = [
   '按下面四步做。第一步到第三步之间**不要改任何文件**：',
   '',
   '一、找出装了什么（非官方）',
+  '  手上有 plugin_manager 工具（创造模式）就直接用它列 bundles，比读文件准；没有就',
   '  读当前 profile 的 package.json（dependencies 与 dsh.profile.bundles），再核对 node_modules 里实际存在的目录；',
   '  列出**非官方**插件（官方 = @deepseek-ai/*），带版本，并标出它有没有 dsh.bundle / dsh.client 声明。',
   '',
@@ -326,8 +327,14 @@ const LOAD_INSTRUCTION = [
   '  1. 读那个插件的 README，确认它允许/建议怎么被外部调用；接口形式必须**严谨推断** ——',
   '     严禁按名字猜、按别的插件套、按截图猜（见 dsh-functions 的 README「严谨猜测插件接口形式」一节）。',
   '     它确实没有对外接口时，照实说明「只能走 X」，并把 X 当接口用，写清证据。',
-  '  2. 按「功能」插件的注册方式接进去（宿主半边优先）。新插件的源码放你自己的插件目录下，',
-  '     profile 用 link: 依赖 + dsh.profile.bundles 一行 + node_modules 里的 Junction 装；',
+  '  2. 按「功能」插件的注册方式接进去（宿主半边优先）。新插件的源码放你自己的插件目录下。',
+  '     装法先看手上有没有 plugin_manager 工具：',
+  '       有（创造模式）：用 plugin_manager 的 install_bundle，target 给插件目录的绝对路径；',
+  '         不要手改 profile 的 package.json / cordis.patch.yml —— 安装器会写，创造模式规矩也不许手写。',
+  '       没有（标准模式）：profile 用 link: 依赖 + dsh.profile.bundles 一行 + node_modules 里的 Junction 装。',
+  '     新插件若将来要公开，按创造模式交付清单补 locale/en.json、locale/zh.json（meta.title/description）',
+  '     和 icon.svg，并在 package.json 里声明 dsh.bundle / dsh.client、exports 的 ./locale/*.json 与 icon；',
+  '     不补也能跑，只是插件管理器里没有标题和图标。',
   '     客户端半边的条目要跟着 slots 账本实时上下线（对方不在就不注册）。',
   '  3. 每个新插件配一份自检（照现有几个的样子），跑过才算完。',
   '  4. 记账：改了什么、怎么验的、还没验的，写进你自己的日志；手册只增不减。',

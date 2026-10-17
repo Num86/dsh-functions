@@ -1,19 +1,32 @@
 /**
- * dsh-functions —— 客户端半边：「功能」标签 + 功能注册接口。
+ * dsh-functions ---- 客户端半边：「功能」标签 + 功能注册接口。
  *
  * 它做两件事：
- *   ① 在客户端顶端（原生「应用 / 编辑」菜单右边）挂一个自己的「功能」标签，
- *      点开是一个下拉面板，列出所有插件注册进来的功能。
- *   ② 通过 ctx.provide('functions', api) 暴露注册接口：别的插件写
+ *   1) 在客户端顶端挂一个自己的「功能」标签（Windows 桌面下贴着原生「应用 / 编辑」
+ *      菜单右边），点开是一个下拉面板，列出所有插件注册进来的功能。
+ *   2) 通过 ctx.provide('functions', api) 暴露注册接口：别的插件写
  *      `export const inject = ['functions']` + `ctx.functions.register({...})` 就能往里加功能。
  *      接口同时提供 confirm / alert / toast，插件不必自带弹窗。
  *
  * 约束（别改）：
- *   · 本文件是浏览器里的普通脚本，不是 ES module：不能出现 import / export。
+ *   - 本文件是浏览器里的普通脚本，不是 ES module：不能出现 import / export。
  *     它只通过 window.__ModuleLoader__.load 注册 factory，导出面靠 module.exports。
- *   · 不 require 任何 Harness Client 包（它们的接口会变），只用纯 DOM + 主题令牌 --dsw-*。
+ *   - 不 require 任何 Harness Client 包（它们的接口会变），只用纯 DOM + 主题令牌 --dsw-*。
  *     升级后最坏是外观退化，不会白屏。
- *   · 渲染一律「软失败」：拿不到原生菜单栏就退回自己的位置，绝不把异常抛到外面。
+ *   - 渲染一律「软失败」：拿不到原生菜单栏就退回自己的位置，绝不把异常抛到外面。
+ *
+ * 2026-10-17（创造模式审查后）的改动：
+ *   - 顶端定位加固：只有 html[data-windows-titlebar]（Windows 桌面壳）才按标题栏处理，
+ *     高度/起点读 --dsh-windows-titlebar-height / --dsh-windows-menu-start，删掉了
+ *     永远读不到的 --dsh-frame-leading-clearance 死路径；非桌面环境维持原 best-effort。
+ *     锚点 [data-windows-menu] 仍是桌面壳 preload 的私有 DOM（当前 DSH 没有标题栏 slot），
+ *     升级 DSH 后要重新核对。
+ *   - 文案优先走 Client locale 服务（ctx.inject(['locale']) + register/bind），本地词典只做兜底。
+ *   - 位置更新从 400ms 轮询改成事件驱动（html 属性变化 / body 子节点变化 / resize +
+ *     启动期最多 3 秒的有限重试）。
+ *   - 会话 id 增加显式读法 uiSession.adapter.current.getSnapshot().key，原候选探测保留兜底。
+ *   - 三条 /api 路径按 document.baseURI 解析，兼容子路径 mount。
+ *   - 弹层去掉「border + elevation 自带 stroke」叠出来的双描边。
  */
 
 window.__ModuleLoader__.load({
@@ -21,7 +34,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     'use strict';
 
-    // ─────────────────────────────────────────────────────────── 文案
+    // ----------------------------------------------------------- 文案
 
     const zh = {
       tab: '功能',
@@ -51,7 +64,15 @@ window.__ModuleLoader__.load({
       footer: 'Provided by dsh-functions',
     };
 
-    /** 当前界面语言：桌面端 <html lang> 由外壳写入，浏览器端退回 navigator。 */
+    /**
+     * 当前界面语言。
+     *
+     * 优先走 Client locale 服务（apply 里注册 dsh-functions 命名空间，由它给译文）；
+     * 服务不在（老版本 / 被裁掉 / 还没挂上）就退回下面的本地词典。
+     * 本地词典按 <html lang> 选：桌面端由外壳写入，浏览器端退回 navigator。
+     */
+    let serviceTranslate = null;
+
     const pickDictionary = () => {
       let tag = '';
       try {
@@ -63,12 +84,22 @@ window.__ModuleLoader__.load({
     };
 
     let dictionary = pickDictionary();
-    const t = (key) => (Object.prototype.hasOwnProperty.call(dictionary, key) ? dictionary[key] : key);
+    const t = (key) => {
+      if (serviceTranslate !== null) {
+        try {
+          const translated = serviceTranslate(key);
+          if (typeof translated === 'string' && translated !== key) return translated;
+        } catch (error) {
+          /* 退回本地词典 */
+        }
+      }
+      return Object.prototype.hasOwnProperty.call(dictionary, key) ? dictionary[key] : key;
+    };
     const refreshDictionary = () => {
       dictionary = pickDictionary();
     };
 
-    // ─────────────────────────────────────────────────────── 小工具
+    // ------------------------------------------------------- 小工具
 
     const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -84,15 +115,26 @@ window.__ModuleLoader__.load({
       }
     };
 
-    /** 请求同一来源的 Host 路由（/api/...），非 2xx 与畸形响应都收敛成 throw。 */
+    /**
+     * 请求同一来源的 Host 路由（api/...），非 2xx 与畸形响应都收敛成 throw。
+     *
+     * 路径按 document.baseURI 解析成相对地址：页面挂在子路径下（mount）时也能用；
+     * 直接写 '/api/...' 会跑到站点根，挂载前缀会被丢掉。
+     */
     const requestJson = async (path, init) => {
       const options = Object.assign({ credentials: 'same-origin' }, init || {});
       if (options.body !== undefined && options.headers === undefined) {
         options.headers = { 'content-type': 'application/json' };
       }
+      let target = path;
+      try {
+        target = new URL(String(path).replace(/^\//, ''), document.baseURI);
+      } catch (error) {
+        target = path;
+      }
       let response;
       try {
-        response = await fetch(path, options);
+        response = await fetch(target, options);
       } catch (error) {
         throw new Error('无法连接 Host：' + errorText(error));
       }
@@ -110,7 +152,7 @@ window.__ModuleLoader__.load({
       return payload;
     };
 
-    // ─────────────────────────────────────────────── 功能注册表（纯数据）
+    // ----------------------------------------------- 功能注册表（纯数据）
 
     let sequence = 0;
 
@@ -142,10 +184,10 @@ window.__ModuleLoader__.load({
       });
     }
 
-    /** 宿主侧三条路由。 */
-    const HOST_LIST_PATH = '/api/dshFunctions/list';
-    const HOST_PREPARE_PATH = '/api/dshFunctions/prepare';
-    const HOST_RUN_PATH = '/api/dshFunctions/run';
+    /** 宿主侧三条路由（相对路径，由 requestJson 按 document.baseURI 解析）。 */
+    const HOST_LIST_PATH = 'api/dshFunctions/list';
+    const HOST_PREPARE_PATH = 'api/dshFunctions/prepare';
+    const HOST_RUN_PATH = 'api/dshFunctions/run';
 
     /** 把宿主功能的执行结果收敛成一句能显示的话。 */
     function summarizeResult(result) {
@@ -164,7 +206,7 @@ window.__ModuleLoader__.load({
      * 用户现在在看哪个会话。
      *
      * 从客户端服务 uiSession 读（它的 current 是个「绑定源」）。这个读法没有正式文档，
-     * 所以**逐个候选试，拿到像样的字符串就用，拿不到就返回空串** ——
+     * 所以**逐个候选试，拿到像样的字符串就用，拿不到就返回空串** ----
      * 空串的意思不是「没有会话」，而是「我不知道」，宿主那边会拒（不猜）。
      */
     function extractSessionId(value, depth = 0) {
@@ -182,10 +224,26 @@ window.__ModuleLoader__.load({
       return '';
     }
 
+    /** 显式读法：uiSession.adapter.current 是 BindingSource，快照上的 key 就是会话 id。 */
+    function explicitUiSessionKey(service) {
+      try {
+        const adapter = service && service.adapter;
+        const source = adapter && adapter.current;
+        const snapshot = source && typeof source.getSnapshot === 'function' ? source.getSnapshot() : undefined;
+        const key = snapshot && typeof snapshot.key === 'string' ? snapshot.key : '';
+        if (key.length > 0 && key.length < 200) return key;
+      } catch (error) {
+        /* 退回下面的候选探测 */
+      }
+      return '';
+    }
+
     function currentSessionId(ctx) {
       try {
         const service = ctx && typeof ctx.get === 'function' ? ctx.get('uiSession') : null;
         if (!service) return '';
+        const explicit = explicitUiSessionKey(service);
+        if (explicit !== '') return explicit;
         const source = service.current;
         for (const reader of ['get', 'read', 'peek', 'valueOf']) {
           if (source && typeof source[reader] === 'function') {
@@ -370,10 +428,11 @@ window.__ModuleLoader__.load({
       };
     }
 
-    // ───────────────────────────────────────────────── 界面样式（shadow 内）
+    // ------------------------------------------------- 界面样式（shadow 内）
 
     const CSS = `
-      :host { position: fixed; top: 0; left: 64px; height: 40px; z-index: 1100; display: flex;
+      :host { position: fixed; top: 0; left: 64px; height: var(--dsh-windows-titlebar-height, 40px); z-index: 1100;
+        display: flex;
         align-items: center; font-family: var(--dsw-font-family, system-ui, -apple-system, 'Segoe UI', sans-serif);
         -webkit-app-region: no-drag; }
       .menubar { display: flex; gap: 2px; }
@@ -391,7 +450,9 @@ window.__ModuleLoader__.load({
         max-height: 62vh; overflow: auto; padding: 6px; border-radius: 10px; display: none;
         background: var(--dsw-alias-bg-layer-2, #232323); color: var(--dsw-alias-label-primary, #ececec);
         border: 0.5px solid var(--dsw-alias-border-l2, rgba(255,255,255,0.12));
-        box-shadow: var(--dsw-elevation-prominent, 0 12px 32px rgba(0,0,0,0.45)); }
+        /* 阴影用 elevation 里不带 stroke 的两层：描边已经由 border 画了，再叠 token 的
+           stroke 会出双线（2026-10-17 修）。 */
+        box-shadow: 0 3px 8px rgba(0, 0, 0, 0.04), 0 0 20px rgba(0, 0, 0, 0.05); }
       .panel[data-open='true'] { display: block; }
       .panelHead { padding: 6px 10px 8px; }
       .panelTitle { font-size: 13px; font-weight: 600; }
@@ -406,17 +467,17 @@ window.__ModuleLoader__.load({
       .itemDesc { flex: 1 1 auto; min-width: 0; text-align: right; white-space: pre-line;
         display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
         font-size: 9.5px; line-height: 14px; color: var(--dsw-alias-label-tertiary, #8a8a8a); }
-      /* 二级菜单：照 Windows 右键菜单那套 —— 父项带 > 箭头，悬停向右展开 */
+      /* 二级菜单：照 Windows 右键菜单那套 ---- 父项带 > 箭头，悬停向右展开 */
       .itemParent { position: relative; }
       .itemArrow { flex: none; margin-left: 4px; font-size: 11px; line-height: 20px;
         color: var(--dsw-alias-label-tertiary, #8a8a8a); }
-      /* 注意：.panel 有 overflow:auto，子元素在面板外会被裁掉 —— 所以子菜单用 fixed，
+      /* 注意：.panel 有 overflow:auto，子元素在面板外会被裁掉 ---- 所以子菜单用 fixed，
          坐标由 JS（place()）按父项的位置算，超出视口时自动翻到左边/上边。 */
       .submenu { position: fixed; left: 0; top: 0; z-index: 5; display: none;
         min-width: 220px; max-width: 420px; padding: 6px; border-radius: 10px;
         background: var(--dsw-alias-bg-layer-2, #232323); color: var(--dsw-alias-label-primary, #ececec);
         border: 0.5px solid var(--dsw-alias-border-l2, rgba(255,255,255,0.12));
-        box-shadow: var(--dsw-elevation-prominent, 0 12px 32px rgba(0,0,0,0.45)); }
+        box-shadow: 0 3px 8px rgba(0, 0, 0, 0.04), 0 0 20px rgba(0, 0, 0, 0.05); }
       .item[data-open='true'] > .submenu { display: block; }
       .empty { padding: 14px 12px 10px; font-size: 12.5px; color: var(--dsw-alias-label-secondary, #a3a3a3); }
       .emptyHint { margin-top: 6px; font-size: 9.5px; color: var(--dsw-alias-label-tertiary, #8a8a8a); }
@@ -428,7 +489,7 @@ window.__ModuleLoader__.load({
       .dialog { width: 100%; max-width: 400px; padding: 20px 20px 16px; color: var(--dsw-alias-label-primary, #ececec);
         border-radius: var(--dsw-radius-panel, 14px); background: var(--dsw-alias-bg-layer-2, #232323);
         border: 0.5px solid var(--dsw-alias-border-l2, rgba(255,255,255,0.12));
-        box-shadow: var(--dsw-elevation-prominent, 0 16px 40px rgba(0,0,0,0.5)); }
+        box-shadow: 0 3px 8px rgba(0, 0, 0, 0.04), 0 0 20px rgba(0, 0, 0, 0.05); }
       .dialogTitle { font-size: 15px; font-weight: 600; line-height: 22px; }
       .dialogMessage { margin-top: 10px; font-size: 13.5px; line-height: 21px; white-space: pre-wrap; }
       .dialogMessage[data-danger='true'] { color: var(--dsw-alias-state-error-primary, #f06a6a); }
@@ -445,7 +506,7 @@ window.__ModuleLoader__.load({
       .toast { max-width: 60vw; padding: 8px 14px; border-radius: 8px; font-size: 12.5px; line-height: 18px;
         background: var(--dsw-alias-bg-layer-2, #232323); color: var(--dsw-alias-label-primary, #ececec);
         border: 0.5px solid var(--dsw-alias-border-l2, rgba(255,255,255,0.12));
-        box-shadow: var(--dsw-elevation-prominent, 0 10px 26px rgba(0,0,0,0.4)); }
+        box-shadow: 0 3px 8px rgba(0, 0, 0, 0.04), 0 0 20px rgba(0, 0, 0, 0.05); }
       .toast[data-kind='error'] { color: var(--dsw-alias-state-error-primary, #f06a6a); }
       .toast[data-kind='success'] { color: var(--dsw-alias-state-success-primary, #3fbf7f); }
       /* 跟外壳原生菜单栏同一条规矩：纯鼠标操作时不画焦点圈（键盘走查仍然画）。 */
@@ -454,7 +515,7 @@ window.__ModuleLoader__.load({
       :host-context(html[data-input-modality='pointer']) .btn:focus-visible { outline-color: transparent; }
     `;
 
-    // ──────────────────────────────────────────── 界面：菜单栏座与各层 DOM
+    // -------------------------------------------- 界面：菜单栏座与各层 DOM
 
     function createSurface(registry, hooks) {
       const options = isObject(hooks) ? hooks : {};
@@ -509,12 +570,28 @@ window.__ModuleLoader__.load({
         if (cancel !== null) cancel();
       });
 
-      // ── 定位：贴着原生「应用 / 编辑」菜单右边 ──────────────
+      // -- 定位：贴着原生「应用 / 编辑」菜单右边 --------------------------------
       //
-      // 原生菜单栏是桌面外壳 preload 注入的 [data-windows-menu]（fixed、结构在 open shadow 里），
-      // 我们从外面量它的矩形，而不是猜宽度：换语言、折叠侧栏都会改它的位置。
-      // 量不到（普通浏览器里跑 dsh web）就退回应用顶带左上角。
+      // 原生菜单栏是【Windows 桌面壳 preload】注入的私有 DOM：[data-windows-menu]
+      // （fixed、结构在 open shadow 里，只在 Windows + dsh-app 页面 + 外壳渲染完
+      // [data-shell-overlay] 之后才存在）。当前 DSH 的 94 个 slot 里没有标题栏/
+      // 菜单条的 slot，所以这个位置只能靠量它 ---- 这是私有契约，升级 DSH 后要重核。
+      //
+      // 加固（2026-10-17）：只有 html[data-windows-titlebar] 才当桌面壳处理，
+      // 标题栏高度/菜单起点优先读外壳文档化的 --dsh-windows-titlebar-height /
+      // --dsh-windows-menu-start；量不到矩形时按这两个变量停位。其它环境
+      // （普通浏览器 / macOS / 老外壳）维持原来的 best-effort 位置，不做假的桌面假设。
       const NATIVE_MENUBAR = '[data-windows-menu]';
+
+      /** 读根元素上的 CSS 变量并解析成数字；读不到返回 null。 */
+      const rootNumber = (name) => {
+        try {
+          const value = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
+          return Number.isFinite(value) ? value : null;
+        } catch (error) {
+          return null;
+        }
+      };
 
       const place = () => {
         let rect = null;
@@ -525,7 +602,7 @@ window.__ModuleLoader__.load({
           rect = null;
         }
         const apply3 = (left, top, height) => {
-          // 只在真的变了的时候写：这个函数每 400ms 跑一次，别每次都让浏览器重算样式。
+          // 只在真的变了的时候写：重复写同样的值会让浏览器白白重算样式。
           if (host.style.left !== left) host.style.left = left;
           if (host.style.top !== top) host.style.top = top;
           if (host.style.height !== height) host.style.height = height;
@@ -534,21 +611,18 @@ window.__ModuleLoader__.load({
           apply3(String(Math.round(rect.right) + 2) + 'px', String(Math.round(rect.top)) + 'px', String(Math.round(rect.height)) + 'px');
           return true;
         }
-        let clearance = Number.NaN;
-        try {
-          clearance = Number.parseFloat(
-            getComputedStyle(document.documentElement).getPropertyValue('--dsh-frame-leading-clearance'),
-          );
-        } catch (error) {
-          clearance = Number.NaN;
+        if (document.documentElement.hasAttribute('data-windows-titlebar')) {
+          const start = rootNumber('--dsh-windows-menu-start');
+          const height = rootNumber('--dsh-windows-titlebar-height');
+          apply3((start !== null ? start : 48) + 'px', '0px', (height !== null ? height : 40) + 'px');
+          return false;
         }
-        // 注意：--dsh-frame-leading-clearance 只在 darwin 下发布，Windows / 浏览器里
-        // 一般读不到，于是落到硬编码的 64px（够躲开侧栏收起后那 56px 控制栏）。
-        apply3((Number.isFinite(clearance) && clearance > 0 ? clearance + 8 : 64) + 'px', '6px', '32px');
+        // 非桌面环境：没有标题栏条可贴，维持原来的 best-effort 位置。
+        apply3('64px', '6px', '32px');
         return false;
       };
 
-      // ── 面板渲染 ────────────────────────────────────────────
+      // -- 面板渲染 --------------------------------------------
       const renderPanel = () => {
         const list = registry.list();
         tabLabel.textContent = t('tab');
@@ -576,7 +650,7 @@ window.__ModuleLoader__.load({
           empty.className = 'empty';
           const failure = registry.hostError;
           if (typeof failure === 'string' && failure.length > 0) {
-            // 拉不到宿主清单 ≠ 没有功能。说清楚，别让人对着空面板猜。
+            // 拉不到宿主清单 != 没有功能。说清楚，别让人对着空面板猜。
             empty.textContent = t('hostUnreachable');
             const why = document.createElement('div');
             why.className = 'emptyHint';
@@ -611,7 +685,7 @@ window.__ModuleLoader__.load({
           item.dataset.functionId = entry.id;
 
           // 行排版：不画单字图标；功能名在前，说明小字靠右，同一行横排。
-          // 说明可以带换行 —— 第二行按约定写这个功能调用的插件（人 2026-10-13 要求）。
+          // 说明可以带换行 ---- 第二行按约定写这个功能调用的插件（人 2026-10-13 要求）。
           const itemTitle = document.createElement('span');
           itemTitle.className = 'itemTitle';
           itemTitle.textContent = entry.title;
@@ -734,7 +808,7 @@ window.__ModuleLoader__.load({
         }
       };
 
-      // ── toast ───────────────────────────────────────────────
+      // -- toast -----------------------------------------------
       const toast = (message, kind) => {
         const text = typeof message === 'string' ? message : errorText(message);
         if (text.length === 0) return;
@@ -747,7 +821,7 @@ window.__ModuleLoader__.load({
         setTimeout(() => node.remove(), 4200);
       };
 
-      // ── 确认弹窗（可连开多级；后来的排队） ──────────────────
+      // -- 确认弹窗（可连开多级；后来的排队） ------------------
       const confirm = (options) => {
         const input = isObject(options) ? options : {};
         const run = dialogTail.then(
@@ -842,7 +916,7 @@ window.__ModuleLoader__.load({
         }).then(() => undefined);
       };
 
-      // ── 执行一个功能 ────────────────────────────────────────
+      // -- 执行一个功能 ----------------------------------------
       const invoke = async (entry, item) => {
         setOpen(false);
         if (item !== undefined) item.disabled = true;
@@ -874,7 +948,7 @@ window.__ModuleLoader__.load({
         }
       };
 
-      // ── 事件接线 ────────────────────────────────────────────
+      // -- 事件接线 --------------------------------------------
       tab.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -941,7 +1015,7 @@ window.__ModuleLoader__.load({
       };
     }
 
-    // ────────────────────────────────────────────────────── 插件体
+    // ------------------------------------------------------ 插件体
 
     /**
      * 客户端插件体：起界面、建注册表、把接口 provide 成 `functions` 服务。
@@ -985,6 +1059,33 @@ window.__ModuleLoader__.load({
         console.warn('[dsh-functions] 无法挂 __DSH_FUNCTIONS__：', error);
       }
 
+      // 文案优先走 Client locale 服务：注册 dsh-functions 命名空间，由它按当前语言给译文。
+      // 用 ctx.inject 而不是写死 inject: ['locale']：locale 对这里只是增强，
+      // 服务不在（老版本/被裁掉）时继续用本地词典，整栏不该因此消失。
+      try {
+        ctx.inject(['locale'], (localized) => {
+          try {
+            localized.effect(
+              () => localized.locale.register('dsh-functions', 'zh', zh),
+              'dsh-functions: zh 词典',
+            );
+            localized.effect(
+              () => localized.locale.register('dsh-functions', 'en', en),
+              'dsh-functions: en 词典',
+            );
+            // bind 返回的翻译函数自己会跟着当前语言走，不需要每次换语言重新绑定。
+            const bound = localized.locale.bind('dsh-functions');
+            serviceTranslate = (key) => bound(key);
+            ui.renderPanel();
+          } catch (error) {
+            serviceTranslate = null;
+            console.warn('[dsh-functions] Client locale 服务不可用，退回本地词典：', error);
+          }
+        });
+      } catch (error) {
+        /* 老版本客户端没有 ctx.inject，保持本地词典 */
+      }
+
       ctx.effect(() => {
         try {
           document.body.append(ui.host);
@@ -998,26 +1099,52 @@ window.__ModuleLoader__.load({
         // 开机先拉一次宿主清单：宿主注册的功能（例如「重启 DSH」）不该等你点开才存在。
         void registry.refreshHost();
 
-        // 原生菜单栏可能比我们晚挂上（preload 在等 [data-shell-overlay]），
-        // 换语言、折叠侧栏也会改它的位置：低频轮询 + resize 兜底最省事也最稳。
-        const timer = setInterval(reposition, 400);
-        window.addEventListener('resize', reposition);
-        const onLanguageChange = () => {
-          refreshDictionary();
-          ui.renderPanel();
+        // 位置跟着外壳变，不轮询：
+        //   - 原生菜单栏由外壳 preload 晚挂（等 [data-shell-overlay] 渲染完）；
+        //   - 侧栏折叠 / 换语言 / 全屏会改 html 上的属性或内联样式；
+        //   - 窗口尺寸变化。
+        // 这三类时机 + 启动期有限重试已经覆盖全部会挪动锚点的情况。
+        let lastLanguage = document.documentElement.getAttribute('lang') || '';
+        const environmentObserver = new MutationObserver(() => {
+          const language = document.documentElement.getAttribute('lang') || '';
+          if (language !== lastLanguage) {
+            lastLanguage = language;
+            refreshDictionary();
+            ui.renderPanel();
+          }
           reposition();
-        };
-        const languageObserver = new MutationObserver(onLanguageChange);
+        });
         try {
-          languageObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
+          environmentObserver.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ['lang', 'style', 'data-sidebar-collapsed', 'data-fullscreen', 'data-windows-titlebar'],
+          });
         } catch (observeError) {
-          /* 观察不到就算了，轮询仍会摆正位置 */
+          /* 观察不到就只靠 resize */
         }
+        const bodyObserver = new MutationObserver(() => {
+          if (document.querySelector('[data-windows-menu]') !== null) reposition();
+        });
+        try {
+          bodyObserver.observe(document.body, { childList: true });
+        } catch (observeError) {
+          /* 观察不到就只靠 resize */
+        }
+        window.addEventListener('resize', reposition);
+        // 启动期有限重试：拿不到锚点就每 100ms 试一次，最多 3 秒；拿到就停。
+        let bootAttempts = 0;
+        const bootTimer = setInterval(() => {
+          bootAttempts += 1;
+          const anchorFound = document.querySelector('[data-windows-menu]') !== null;
+          reposition();
+          if (anchorFound || bootAttempts >= 30) clearInterval(bootTimer);
+        }, 100);
 
         return () => {
-          clearInterval(timer);
+          clearInterval(bootTimer);
           window.removeEventListener('resize', reposition);
-          languageObserver.disconnect();
+          environmentObserver.disconnect();
+          bodyObserver.disconnect();
           try {
             if (globalThis.__DSH_FUNCTIONS__ === api) delete globalThis.__DSH_FUNCTIONS__;
           } catch (error) {
