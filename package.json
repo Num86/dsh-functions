@@ -1,7 +1,7 @@
 {
   "name": "dsh-functions",
-  "version": "0.3.1",
-  "description": "功能栏：给 DSH 客户端顶端加一个「功能」标签，插件在宿主里 register 一下就能往里加一键功能",
+  "version": "0.4.0",
+  "description": "功能栏：给 DSH 客户端顶端加一个「功能」标签，插件在宿主里 register 一下就能往里加一键功能；0.4.0 起内置「重启 DSH」",
   "icon": "icon.svg",
   "type": "module",
   "license": "MIT",
@@ -11,12 +11,16 @@
     "deepseek-harness",
     "functions",
     "menu",
-    "命令面板"
+    "命令面板",
+    "restart"
   ],
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
+    "./restart": "./restart.js",
     "./locale/*.json": "./locale/*.json",
+    "./restart/locale/*.json": "./restart/locale/*.json",
+    "./restart/icon": "./restart/icon.svg",
     "./package.json": "./package.json"
   },
   "dsh": {
@@ -31,11 +35,15 @@
   "files": [
     "index.js",
     "client.js",
+    "restart.js",
+    "restart-helper.js",
     "cordis.patch.yml",
     "README.md",
     "LICENSE",
     "locale/*.json",
     "icon.svg",
+    "restart/locale/*.json",
+    "restart/icon.svg",
     "test"
   ],
   "author": "Num86",

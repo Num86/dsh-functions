@@ -231,3 +231,15 @@ DSH → 插件 → 添加插件，填这个包的路径（tarball 或解包目�
 ## License
 
 MIT
+
+---
+
+## 已被收录进插件市场（2026-10-18）
+
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+
+  · 目录条目：https://awesome-dsh-plugin.com/p/Num86/dsh-functions/
+  · 收录 PR（已合并）：https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7746
+  · 别人怎么装：`dsh plugin add github:Num86/dsh-functions`
+    （或在 DSH 的插件页填 GitHub 地址；市场里直接搜 dsh-functions 也行）
+

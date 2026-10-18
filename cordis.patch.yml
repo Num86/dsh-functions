@@ -1,6 +1,13 @@
-# dsh-functions bundle patch：往 profile 里插一行，Loader 挂上这个包之后
-# dsh-client-modules 才会把它的 client.js 编进浏览器启动图。行名由 profile 自己的
-# node_modules 解析（profile package.json 里以 link: 依赖装好后即可）。
+# dsh-functions bundle patch：往 profile 里插两行。
+#
+#   functions-menu     包根插件：客户端顶端「功能」标签 + 宿主注册表（dsh-functions）
+#   functions-restart  子路径插件：内置的「重启 DSH」（dsh-functions/restart）
+#
+# 0.4.0 起「重启 DSH」并进这个包。不想显示这一条的话，在 profile 补丁里按行 id
+# 覆盖 functions-restart 并写 disabled: true。
+# 行名由 profile 自己的 node_modules 解析（profile package.json 里装好这个包即可）。
 - insert:
     - id: functions-menu
       name: dsh-functions
+    - id: functions-restart
+      name: dsh-functions/restart
