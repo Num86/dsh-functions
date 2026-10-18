@@ -175,6 +175,11 @@ check('指令里有「非官方插件」', instruction.includes('非官方'));
 check('指令里要求列编号并等用户回', instruction.includes('编号') && instruction.includes('等'));
 check('指令里点名了「严谨猜测插件接口形式」', instruction.includes('严谨猜测插件接口形式'));
 check('指令里写了两种加法（宿主 / 客户端）', instruction.includes('宿主半边') && instruction.includes('客户端半边'));
+check('指令里说明了 profile 目录怎么找（DSH_PROFILE_DIR / %USERPROFILE%）', instruction.includes('DSH_PROFILE_DIR') && instruction.includes('%USERPROFILE%'));
+check('指令里没有本机绝对路径 / 房间路径', !/D:[\/]Documents/i.test(instruction) && !instruction.includes('Chinese_room'));
+check('指令里给了两种安装入口（plugin_manager / 插件页添加插件）', instruction.includes('plugin_manager') && instruction.includes('添加插件'));
+check('指令里提醒装完宿主半边要重启 DSH', instruction.includes('重启 DSH'));
+check('没有非官方插件时要求照实说', instruction.includes('没有可加载的'));
 
 await app.ctx.stop?.();
 console.log('\n' + (failures === 0 ? '全部通过' : '失败 ' + String(failures) + ' 项'));

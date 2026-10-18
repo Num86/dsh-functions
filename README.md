@@ -156,15 +156,24 @@ DSH → 插件 → 添加插件，填这个包的路径（tarball 或解包目�
 所以它走「把一段指令当成**用户消息**送进当前会话」这条路 ——
 让会话里的 dsh 去插件库里找非官方插件、列出数字编号给用户挑，再读 README 把它们接进「功能」栏。
 
-这条指令装插件分两条路：
+0.4.1 起，这条指令改成**可移植写法**（以前的版本里带了几处作者本机的假设，换台机器会误导 agent）：
 
-1. 当前会话有 `plugin_manager` 工具（创造模式）时：用它的 `install_bundle` 直接装本地插件目录。
-   **不要**手改 profile 的 `package.json`，也不要手动建 Junction。
-2. 没有 `plugin_manager` 时：才退回 `link:` 依赖 + `dsh.profile.bundles` 一行 +
-   `node_modules` 里 Junction 的手动装法，装完重启 DSH。
+- **不写死任何路径**。找 profile 用 `DSH_PROFILE_DIR` 环境变量；没有就按通用位置找：
+  Windows `%USERPROFILE%\.dsh\profiles\<profile>`、macOS/Linux `~/.dsh/profiles/<profile>`
+  （桌面版通常叫 `desktop`）。插件源码放**用户自己的工作区**（例如当前目录下
+  `dsh-plugins/<插件名>`），明确说明**不要**放进 DSH 安装目录（升级会覆盖）或 profile 目录本身。
+- **装法按优先级给全**：
+  1. 当前会话有 `plugin_manager` 工具（创造模式）：用 `install_bundle` 装插件目录的绝对路径；
+     **不要**手改 profile 的 `package.json` / `cordis.patch.yml`。
+  2. 没有 `plugin_manager`：用 DSH 插件页「添加插件」填插件目录绝对路径（官方入口，最稳）。
+  3. 实在没有界面入口：才退回 `link:` 依赖 + `dsh.profile.bundles` 一行 + Junction 手动装，
+     装完重启 DSH。
+- **提醒收尾**：装完宿主半边要重启 DSH（有 HMR 的除外），客户端半边刷新页面。
+- **一个非官方插件都没有时**：要求 agent 照实说「没有可加载的」，不要编，可以建议先装插件。
 
-两条路的共同要求没变：目标插件目录必须由外部指定（按编号或路径，不猜「最近动过的」）；
+共同要求没变：目标插件目录必须由外部指定（按编号或路径，不猜「最近动过的」）；
 接进「功能」栏前先读对方 README；接口拿不到就照实说「没找到」，不编。
+确认窗里的第一级一直是「发一条指令进当前会话」，真正发不发由你点「发指令」决定。
 
 指令里点名了下面这一节。
 

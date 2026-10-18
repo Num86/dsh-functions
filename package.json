@@ -1,6 +1,6 @@
 {
   "name": "dsh-functions",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "功能栏：给 DSH 客户端顶端加一个可扩展的「功能」标签，插件一行注册就能加一键功能；自带了重启 DSH 功能（不再需要单独装 dsh-function-restart）",
   "icon": "icon.svg",
   "type": "module",

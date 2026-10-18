@@ -306,9 +306,12 @@ const LOAD_INSTRUCTION = [
   '按下面四步做。第一步到第三步之间**不要改任何文件**：',
   '',
   '一、找出装了什么（非官方）',
-  '  手上有 plugin_manager 工具（创造模式）就直接用它列 bundles，比读文件准；没有就',
-  '  读当前 profile 的 package.json（dependencies 与 dsh.profile.bundles），再核对 node_modules 里实际存在的目录；',
+  '  手上有 plugin_manager 工具（创造模式）就直接用它列 bundles，比读文件准；没有就自己找当前 profile：',
+  '    - 环境变量 DSH_PROFILE_DIR 就是 profile 目录；没有它时，Windows 一般在',
+  '      %USERPROFILE%\\.dsh\\profiles\\<profile 名>，macOS/Linux 在 ~/.dsh/profiles/<profile 名>（桌面版通常是 desktop）。',
+  '    - 读那个目录下的 package.json（dependencies 与 dsh.profile.bundles），再核对 node_modules 里实际存在的目录。',
   '  列出**非官方**插件（官方 = @deepseek-ai/*），带版本，并标出它有没有 dsh.bundle / dsh.client 声明。',
+  '  一个非官方插件都没有时，照实说「没有可加载的」，不要编；可以建议我先把要接的插件装上。',
   '',
   '二、逐个查它们对外提供什么（怎么用 / 触发 / 进入 / 设置）',
   '  对每个插件按这个顺序找证据，**找不到就写「没找到」，不要编**：',
@@ -327,17 +330,21 @@ const LOAD_INSTRUCTION = [
   '  1. 读那个插件的 README，确认它允许/建议怎么被外部调用；接口形式必须**严谨推断** ——',
   '     严禁按名字猜、按别的插件套、按截图猜（见 dsh-functions 的 README「严谨猜测插件接口形式」一节）。',
   '     它确实没有对外接口时，照实说明「只能走 X」，并把 X 当接口用，写清证据。',
-  '  2. 按「功能」插件的注册方式接进去（宿主半边优先）。新插件的源码放你自己的插件目录下。',
-  '     装法先看手上有没有 plugin_manager 工具：',
-  '       有（创造模式）：用 plugin_manager 的 install_bundle，target 给插件目录的绝对路径；',
-  '         不要手改 profile 的 package.json / cordis.patch.yml —— 安装器会写，创造模式规矩也不许手写。',
-  '       没有（标准模式）：profile 用 link: 依赖 + dsh.profile.bundles 一行 + node_modules 里的 Junction 装。',
+  '  2. 按「功能」插件的注册方式接进去（宿主半边优先）。新插件的源码放到**你自己工作区里的新目录**',
+  '     （例如当前工作目录下的 dsh-plugins/<插件名>，或我指定的目录）；不要放进 DSH 安装目录（升级会覆盖），',
+  '     也不要放进 profile 目录本身。插件目录的绝对路径按这台机器的实际情况取，别照抄文档里的示例路径。',
+  '     装法按这个顺序挑：',
+  '       1) 有 plugin_manager 工具（创造模式）：用 install_bundle，target 给插件目录的绝对路径；',
+  '          不要手改 profile 的 package.json / cordis.patch.yml —— 安装器会写。',
+  '       2) 没有 plugin_manager：用 DSH 的插件页「添加插件」填插件目录的绝对路径（官方入口，最稳）；',
+  '          没有界面入口时，才用 profile 的 link: 依赖 + dsh.profile.bundles 一行 + node_modules 里的 Junction 手动装。',
   '     新插件若将来要公开，按创造模式交付清单补 locale/en.json、locale/zh.json（meta.title/description）',
   '     和 icon.svg，并在 package.json 里声明 dsh.bundle / dsh.client、exports 的 ./locale/*.json 与 icon；',
   '     不补也能跑，只是插件管理器里没有标题和图标。',
   '     客户端半边的条目要跟着 slots 账本实时上下线（对方不在就不注册）。',
-  '  3. 每个新插件配一份自检（照现有几个的样子），跑过才算完。',
-  '  4. 记账：改了什么、怎么验的、还没验的，写进你自己的日志；手册只增不减。',
+  '  3. 每个新插件配一份最小自检（能跑、能证明注册成功即可；没有现成例子就写个 smoke test），跑过才算完。',
+  '  4. 装完宿主半边要重启 DSH 才生效（有 HMR 的除外）；客户端半边刷新页面即可。',
+  '  5. 记账按你所在项目自己的规矩；没有规定就写清改了哪个文件、怎么验的、还差什么。',
   '',
   '（这条指令是「功能」栏里的「加载功能」发出来的，等价于你自己敲了上面这段话。）',
 ].join('\n');
@@ -421,7 +428,7 @@ function makeLoaderFunction(ctx) {
     run: async (job) => {
       const target = resolveSession(ctx, job.session);
       if (target.id === '') {
-        throw new Error('不知道发到哪个会话：功能这边没拿到「你在看哪个会话」（客户端没报，也没有 roomFrontSession）。这条指令发错窗口代价太大，所以不猜。');
+        throw new Error('不知道发到哪个会话：功能这边没拿到「你在看哪个会话」（客户端没报会话）。这条指令发错窗口代价太大，所以不猜。');
       }
       const busy = busyWhy(ctx, target.id);
       const sent = sendToSession(ctx, target.id, LOAD_INSTRUCTION, 'functions-load');
