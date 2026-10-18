@@ -24,6 +24,7 @@
  *
  * payload：
  *   desktop: { mode, appPid, appExec, port, initialDelayMs, graceMs, pollMs, waitExitMs, waitPortMs, guardDelayMs, logPath }
+ *   guard:   同 desktop，另加 innerPid（由外层 --outer 填，用来判断内层助手是否还活着）
  *   cli:     { mode, pid, execPath, argv, cwd, initialDelayMs, pollMs, waitExitMs, logPath }
  */
 
@@ -131,22 +132,6 @@ function imageNameOf(pid) {
   return match === null ? null : match[1];
 }
 
-/** 有没有「叫这个名字」的进程活着（安全网用，判断应用是不是已经回来了）。 */
-function anyProcessNamed(imageName) {
-  const systemRoot = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
-  const executable = join(systemRoot, 'System32', 'tasklist.exe');
-  try {
-    const result = spawnSync(executable, ['/NH', '/FO', 'CSV', '/FI', 'IMAGENAME eq ' + imageName], {
-      encoding: 'utf8',
-      windowsHide: true,
-    });
-    const output = typeof result.stdout === 'string' ? result.stdout : '';
-    return output.toLowerCase().includes(('"' + imageName + '"').toLowerCase());
-  } catch (error) {
-    return false;
-  }
-}
-
 /** 端口在不在监听（连得上就是有人占着）。端口非法时直接返回 false。 */
 function portListening(port) {
   return new Promise((resolve) => {
@@ -198,6 +183,10 @@ async function waitPortListening(port, timeoutMs, pollMs) {
  * （main.js: claimDesktopSingleInstance），第二次启动会被已经跑着的那个收到
  * second-instance 事件，回调里就是 focusPrimaryWindow() —— 显示、还原、置顶。
  * 也就是说：**用户现在手工点托盘那一下，可以由助手代劳**，而第二次启动自己会立刻退出。
+ *
+ * 端口在这里只当「早点叫窗口」的快路径：0.2.1-rc.2 的桌面 Host 用 `--port 0` 动态端口，
+ * 新实例的端口跟旧端口不一样，所以「等旧端口重新监听」通常等不到（2026-10-18 审查发现）。
+ * 等不到就按固定延时叫窗口 —— 第二次启动即使应用已经开着，也只是把它叫到前台，不多开实例。
  */
 async function launchAppAndFocus(payload, logPath) {
   const appExec = payload.appExec;
@@ -206,28 +195,23 @@ async function launchAppAndFocus(payload, logPath) {
   const launched = launch(appExec, [], { cwd, env, windowsHide: false }, logPath);
   if (launched === null) return null;
 
-  await sleep(1500);
-  log(logPath, '应用进程存在=' + String(anyProcessNamed(basename(appExec))));
-
   if (payload.focusNudge === false) {
     log(logPath, '（按配置不叫窗口）');
     return launched;
   }
   const waitMs = Number.isFinite(payload.focusWaitMs) ? payload.focusWaitMs : 45000;
   const pollMs = Number.isFinite(payload.pollMs) && payload.pollMs > 0 ? payload.pollMs : 250;
+
+  let ready = false;
   if (usablePort(payload.port)) {
-    const ready = await waitPortListening(payload.port, waitMs, pollMs);
-    log(logPath, '端口开始监听=' + String(ready));
-    if (!ready) {
-      log(logPath, '没等到端口，不叫窗口（应用可能还在启动或起不来）');
-      return launched;
-    }
-  } else {
-    // 拿不到端口（例如老版本没有 webServer.getOrigin）：给应用一个固定启动窗口再叫。
-    const fallbackWait = Math.min(waitMs, 8000);
-    log(logPath, '端口未知，等 ' + String(fallbackWait) + 'ms 再叫窗口');
-    await sleep(fallbackWait);
+    // 老版本若用固定端口，旧端口会重新监听，可以早一点叫窗口。
+    ready = await waitPortListening(payload.port, Math.min(waitMs, 6000), pollMs);
+    log(logPath, '旧端口重新监听=' + String(ready));
   }
+  const delay = ready ? 800 : Math.min(waitMs, 8000);
+  log(logPath, '等 ' + String(delay) + 'ms 后叫窗口');
+  await sleep(delay);
+
   const nudge = launch(appExec, [], { cwd, env, windowsHide: false }, logPath);
   log(logPath, nudge === null ? '叫窗口失败（第二次启动没起来）' : '已请求把窗口叫到前台（第二次启动，它会自己退出）');
   return launched;
@@ -260,6 +244,9 @@ function launch(execPath, args, options, logPath) {
       cwd: options.cwd,
       env: options.env,
     });
+    // spawn 的失败（ENOENT/EPERM：可移动盘被拔掉、安装目录被删等）是【异步】的
+    // 'error' 事件；不挂监听会变成未捕获异常，把助手自己带崩（2026-10-18 审查发现）。
+    child.on('error', (error) => log(logPath, '拉起后报错 ' + execPath + '：' + String(error && error.message)));
     child.unref();
     log(logPath, '已拉起 ' + execPath + ' pid=' + String(child.pid));
     return child.pid;
@@ -348,25 +335,39 @@ async function runDesktop(payload, logPath) {
   await launchAppAndFocus(payload, logPath);
 }
 
-/** 安全网：主助手万一没活下来，这里兜底把应用拉起来。 */
+/**
+ * 安全网：主助手万一没活下来，这里兜底把应用拉起来。
+ *
+ * 2026-10-18 审查发现并修掉：旧实现用 `anyProcessNamed(appImage)` 判断「应用是否已回来」，
+ * 但安全网自己也是用桌面 exe + ELECTRON_RUN_AS_NODE 起的，映像名和桌面主程序一样
+ * （本机还有多个 Node 模式子进程同名），于是它永远「看到应用」、
+ * 永远直接退出 —— 安全网实际从不兜底。现在改成看**内层助手的 pid**：
+ *   内层还活着 -> 交给它，安全网退出；
+ *   内层不在了 -> 无法判断应用是被内层拉起来了还是内层中途死了，直接再拉起一次：
+ *                 应用已经开着时，Electron 的 single-instance 只会把它叫到前台，
+ *                 第二次启动自己退出，不会多开实例。
+ */
 async function runGuard(payload, logPath) {
-  const appImage = basename(payload.appExec);
-  log(logPath, 'guard 模式：' + String(payload.guardDelayMs) + 'ms 后检查应用是否已回来');
+  log(logPath, 'guard 模式：先等 ' + String(payload.guardDelayMs) + 'ms，再盯内层助手到它退出为止');
   await sleep(payload.guardDelayMs);
-  if (anyProcessNamed(appImage)) {
-    log(logPath, 'guard：应用已在运行，退出');
-    return;
+  const innerPid = Number(payload.innerPid);
+
+  // 内层助手可能还在慢慢干活（慢机器上最坏可到一分多钟）：盯到它退出，
+  // 期间绝不插手；它退出后再兜底拉一次（应用已开着的话只会被叫到前台）。
+  if (Number.isSafeInteger(innerPid) && innerPid > 0) {
+    const maxWaitMs = 180000;
+    const startedAt = Date.now();
+    while (alive(innerPid) && Date.now() - startedAt < maxWaitMs) {
+      await sleep(500);
+    }
+    if (alive(innerPid)) {
+      log(logPath, 'guard：内层助手还在跑（pid=' + String(innerPid) + '），按超时退出，不插手');
+      return;
+    }
+    log(logPath, 'guard：内层助手已退出（pid=' + String(innerPid) + '）');
   }
-  if (await portListening(payload.port)) {
-    log(logPath, 'guard：端口已在监听，说明应用正在启动，退出');
-    return;
-  }
-  await sleep(1200);
-  if (anyProcessNamed(appImage) || (await portListening(payload.port))) {
-    log(logPath, 'guard：复查发现应用已回来，退出');
-    return;
-  }
-  log(logPath, 'guard：应用没回来，兜底拉起');
+
+  log(logPath, 'guard：兜底拉起一次（已经开着的话会被叫到前台）');
   await launchAppAndFocus(payload, logPath);
 }
 
@@ -445,7 +446,9 @@ async function main() {
     });
 
     if (payload.mode === 'desktop') {
-      const guard = spawn(process.execPath, [SELF, '--guard', raw], options);
+      // 安全网要盯着内层的 pid 判断它是否还活着（映像名判断不可靠，2026-10-18 审查）。
+      const guardPayload = { ...payload, innerPid: inner.pid };
+      const guard = spawn(process.execPath, [SELF, '--guard', JSON.stringify(guardPayload)], options);
       guard.on('error', (error) => log(logPath, 'outer：安全网启动失败 ' + String(error && error.message)));
       guard.unref();
       log(logPath, 'outer：内层 pid=' + String(inner.pid) + ' 安全网 pid=' + String(guard.pid) + ' 启用=' + String(innerStarted));

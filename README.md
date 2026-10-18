@@ -14,7 +14,7 @@
                       | 重启 DSH        重启 DSH，让设置生效   |
                       +----------------------------------------+
 
-（示意图来自作者本机安装的一组插件；只装本包时，面板里只有内置的「加载功能」。）
+（示意图来自作者本机安装的一组插件；只装本包时，面板里有内置的「加载功能」和「重启 DSH」（0.4.0 起）。）
 
 **不 patch DSH 本体，不 require React，不引任何 Harness 客户端包** ——
 它就是一个普通插件：一行 Loader 条目 + 宿主半边 + 一个自带样式的客户端 bundle。
@@ -30,7 +30,8 @@ DSH → 插件 → 添加插件，填这个包的路径（tarball 或解包目�
 装好后插件页会用它包里的展示元数据（`locale/zh.json`、`locale/en.json` 里的
 `meta.title` / `meta.description`）显示标题与描述，并显示包内的 `icon.svg`。
 `package.json` 里对应的是顶层 `icon` 字段、`exports` 里的 `./locale/*.json`，
-以及 `files` 里的 `locale/*.json` 与 `icon.svg`（0.3.1 起）。
+以及 `files` 里的 `locale/*.json` 与 `icon.svg`（0.3.1 起；0.4.0 起还带 `restart/` 的
+图标与 locale，见下面「一键重启 DSH」一节）。
 
 ## 五行加一条功能（宿主半边，推荐）
 
@@ -164,6 +165,53 @@ DSH → 插件 → 添加插件，填这个包的路径（tarball 或解包目�
 
 指令里点名了下面这一节。
 
+## 一键重启 DSH（0.4.0 起内置）
+
+功能栏 -> 系统 -> **重启 DSH**。两次确认才算数：
+
+1. 第一级交代后果：会关闭当前的 DSH 进程，几秒后自动重新打开。
+2. 第二级在点完第一级之后才去查**有没有正在进行中的任务**：有会话在跑、有后台任务在跑，
+   就列出来并把确认键换成「仍要重启」（红色）；没有就写「现在没有检测到正在进行中的任务」；
+   状态接口没应答时照实说「无法确认」，不假装没有任务。
+
+桌面端的「关闭」本质是强制关：外壳会把主窗口拦下并缩进托盘，所以插件用
+`taskkill /T /F` 关整棵进程树。应用带起来的子进程（终端、后台任务、MCP 等）会一起结束，
+没有收尾；重启后助手会再把窗口叫到前台。
+
+叫窗口不依赖端口探测：0.2.1-rc.2 桌面版用的是动态端口，新实例端口通常和旧的不一样。
+端口只当「早点叫窗口」的快路径（最多等 6 秒）；等不到就固定等 8 秒再叫窗口 ——
+第二次启动只会把已经开着的窗口叫到前台，不会多开实例。另有一层安全网：外层把内层助手的
+pid 交给它，盯到内层退出后才兜底拉起一次（应用已经开着时同样只会被叫到前台）。
+
+**平台支持：**
+
+| 平台 | 支持 | 行为 |
+| --- | --- | --- |
+| Windows 桌面版 | 完整支持 | 关整棵树 -> 重新拉起 -> 第二次启动把窗口叫到前台（动态端口下按固定延时兜底）；安全网盯内层助手 pid 兜底 |
+| dsh CLI / headless | 支持 | 不依赖 taskkill：本进程按计划退出，助手用同样的命令重新拉起 |
+| macOS / Linux 桌面 | 不支持 | 按钮标题带「仅 Windows 桌面版」；点了只说明原因，不执行、不假装重启 |
+
+**不需要再单独安装 `dsh-function-restart`。** 0.4.0 起它已经并入本包（子路径插件
+`dsh-functions/restart`），装本包一次就同时得到「功能」栏和「重启 DSH」。
+以前装过独立包的：本包启动后会把功能接管过来，独立包看到已有 `restart-dsh` 就不再注册；
+确认本包的重启能用之后，把 `dsh-function-restart` 从 profile 里移除，再重启一次 DSH 即可。
+
+**日志**：默认落在 `DSH_HOME/dsh-functions-restart.log`；没有 `DSH_HOME` 就用
+`%USERPROFILE%\.dsh\dsh-functions-restart.log`，都没有就落系统临时目录。
+可以在 loader 行的 config 里用 `logPath` 覆盖。排查「按了没反应」先看这份日志。
+
+**关闭这一条**：在 profile 补丁里按行 id 覆盖已有的 `functions-restart` 行，写
+`disabled: true`（不要新增第二行同名插件）：
+
+    - id: functions-restart
+      name: dsh-functions/restart
+      disabled: true
+
+这一行的 config 还支持 `initialDelayMs` / `graceMs` / `pollMs` / `waitExitMs` /
+`waitPortMs` / `guardDelayMs` / `focusNudge` / `focusWaitMs` / `exitDelayMs` / `dryRun` /
+`logPath`，默认值见包内 `restart.js` 的 `DEFAULTS`。其中 `guardDelayMs` 只是安全网开始
+接管的延时（之后它盯内层助手的 pid，内层退出后才兜底，不再需要覆盖最坏耗时）。
+
 ## 严谨猜测插件接口形式
 
 插件自己多半没为「功能」写接口。接它的时候，最常遇到的不是「接不上」，而是**对方没写文档**。
@@ -191,23 +239,32 @@ DSH → 插件 → 添加插件，填这个包的路径（tarball 或解包目�
 
 ## 自检
 
-自检只需要真 cordis，不需要别的插件，也不需要 DSH 在跑。
+自检只需要真 cordis，不需要别的插件，也不需要 DSH 在跑。两份：
 
     # Windows 桌面版（推荐）：用 DSH 自带的 Electron Node 跑，cordis 会从应用包里回退解析
     $env:ELECTRON_RUN_AS_NODE = '1'
     & "<DSH 安装目录>\DeepSeek Harness.exe" test/selftest.mjs
+    & "<DSH 安装目录>\DeepSeek Harness.exe" test/restart.selftest.mjs
 
-    # 或者在干净克隆里先装一份 cordis，再用普通 node
+    # 或者在干净克隆里先装一份 cordis，再用普通 node（两个脚本都跑）
     npm i -D @deepseek-ai/cordis
     node test/selftest.mjs
+    node test/restart.selftest.mjs
 
 `ELECTRON_RUN_AS_NODE=1` 不能省：少了它，`DeepSeek Harness.exe` 会按**应用模式**启动第二个
 应用实例，而不是跑脚本。（cmd.exe 里的等价写法是 `set ELECTRON_RUN_AS_NODE=1`，再用 `&`
 把后面的命令连上。）
 
-它用真 cordis 起一个 Context，把插件挂上去，验：注册表 / 确认窗归一化 / 分级确认 /
-三条路由 / 冻结顺序（历史上「注册完菜单是空的」就是这个）/ 二级菜单与置顶字段 /
-内置「加载功能」的行为。当前项数以脚本输出为准。
+- `test/selftest.mjs`：用真 cordis 起一个 Context，把插件挂上去，验注册表 / 确认窗归一化 /
+  分级确认 / 三条路由 / 冻结顺序（历史上「注册完菜单是空的」就是这个）/ 二级菜单与置顶字段 /
+  内置「加载功能」的行为。
+- `test/restart.selftest.mjs`：验内置「重启 DSH」的注册项与两级确认、任务判据（拿不到状态
+  就照实说不知道，不假装没任务）、平台判据（macOS / Linux 明确不支持）、助手 payload
+  （端口从 `webServer.getOrigin()` 推、不写死）、动手前核对映像名、安全网用内层助手 pid 判断、
+  动态端口下叫窗口有固定延时兜底（旧端口只当限时 6 秒的快路径）、spawn 异步失败不崩助手，
+  以及可移植性回归。
+
+两份都不碰真进程、不重启任何东西。当前项数以脚本输出为准。
 
 ## 升级兼容性
 
@@ -225,6 +282,10 @@ DSH → 插件 → 添加插件，填这个包的路径（tarball 或解包目�
    格式变了客户端半边加载不进来，顶端就没有标签（宿主半边仍然在跑）。
 5. **顶端锚点**：`[data-windows-menu]` 是 Windows 桌面壳的私有 DOM，升级后位置可能退化，
    见「客户端半边」一节。
+6. **重启依赖的系统面**：重启走 Windows 的 `taskkill` / `tasklist`（用 `SystemRoot` 下的
+   绝对路径），桌面壳判定用 `process.send` / IPC 与 argv，端口从 `webServer.getOrigin()` 推。
+   这些系统工具或接口变了，先用 `test/restart.selftest.mjs` 验证；非 Windows 桌面会明确拒绝，
+   不会误执行。
 
 升级后建议顺序：跑自检 -> 重启 DSH -> 打开「功能」栏点一条内置功能 -> 再动别的。
 
@@ -238,8 +299,8 @@ MIT
 
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 
-  · 目录条目：https://awesome-dsh-plugin.com/p/Num86/dsh-functions/
-  · 收录 PR（已合并）：https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7746
-  · 别人怎么装：`dsh plugin add github:Num86/dsh-functions`
+  - 目录条目：https://awesome-dsh-plugin.com/p/Num86/dsh-functions/
+  - 收录 PR（已合并）：https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7746
+  - 别人怎么装：`dsh plugin add github:Num86/dsh-functions`
     （或在 DSH 的插件页填 GitHub 地址；市场里直接搜 dsh-functions 也行）
 

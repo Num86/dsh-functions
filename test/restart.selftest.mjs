@@ -268,12 +268,12 @@ async function testHelperRefusesWrongPid() {
     guardDelayMs: 2500,
     logPath,
   };
-  const outer = spawnSync(process.execPath, [HELPER, '--outer', JSON.stringify(payload)], {
+  const run = spawnSync(process.execPath, [HELPER, JSON.stringify(payload)], {
     encoding: 'utf8',
     windowsHide: true,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
   });
-  check('外层助手能启动', outer.status === 0, String(outer.stderr ?? '').slice(0, 200));
+  check('助手能启动（内层直接跑，不拉安全网）', run.status === 0, String(run.stderr ?? '').slice(0, 200));
 
   let text = '';
   for (let i = 0; i < 30; i += 1) {
@@ -287,20 +287,28 @@ async function testHelperRefusesWrongPid() {
   check('pid 对不上时中止，不杀进程', text.includes('中止'), text.split('\n').slice(-3).join(' | '));
   const alive = spawnSync('tasklist', ['/NH', '/FO', 'CSV', '/FI', 'PID eq ' + String(explorerPid)], { encoding: 'utf8', windowsHide: true }).stdout ?? '';
   check('explorer 还活着', alive.includes('explorer.exe'));
-  // 等安全网（guardDelayMs 2.5s）也退出，再清理，免得它把日志目录写回来。
-  await new Promise((resolve) => setTimeout(resolve, 3200));
   rmSync(scratch, { recursive: true, force: true });
 }
 
+function testSafetyNetSource() {
+  console.log('7 安全网/健壮性源码检查');
+  const helperSrc = readFileSync(HELPER, 'utf8');
+  check('安全网改用内层 pid 判断（不再用任何「映像名=应用」的假设）',
+    helperSrc.includes('innerPid') && !helperSrc.includes('function anyProcessNamed'));
+  check('spawn 的异步失败挂了 error 监听（盘被拔/卸载不崩助手）', /child\.on\('error'/.test(helperSrc));
+  check('叫窗口有固定延时兜底（动态端口下也生效）', helperSrc.includes('后叫窗口'));
+  check('动态端口：旧端口只当快路径（限时 6000ms）', helperSrc.includes('Math.min(waitMs, 6000)'));
+}
+
 function testPortability() {
-  console.log('7 可移植性回归');
+  console.log('8 可移植性回归');
   const jsOnly = readFileSync(INDEX, 'utf8') + '\n' + readFileSync(HELPER, 'utf8');
   const pkgText = readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8');
   const pkg = JSON.parse(pkgText);
   const patchText = readFileSync(join(PACKAGE_ROOT, 'cordis.patch.yml'), 'utf8');
   // 房间源码版允许在【自己的】cordis.patch.yml 里带房间日志路径（硬要求 1）；
-  // 公开版（author 不是 Chinese_room）必须连补丁一起干净。运行时 JS 两边都不许有本机路径。
-  const isPublicCopy = pkg.author !== 'Chinese_room';
+  // 公开版（package.json 带 repository 字段）必须连补丁一起干净。运行时 JS 两边都不许有本机路径。
+  const isPublicCopy = typeof pkg.repository === 'object' && pkg.repository !== null;
   const combined = isPublicCopy ? jsOnly + '\n' + patchText : jsOnly;
   check('运行文件里没有本机 profile 路径', !combined.includes('.dsh\profiles\desktop') && !combined.includes('.dsh/profiles/desktop'));
   check('运行文件里没有 D:/Documents 这类本机绝对路径', !/D:[\\/]Documents/i.test(combined));
@@ -326,6 +334,7 @@ async function main() {
   testPlatformHelpers(mod);
   testPayload(mod);
   await testHelperRefusesWrongPid();
+  testSafetyNetSource();
   testPortability();
   console.log('\n' + (failures === 0 ? '全部通过' : '失败 ' + String(failures) + ' 项'));
   process.exitCode = failures === 0 ? 0 : 1;
