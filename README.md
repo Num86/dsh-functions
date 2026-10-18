@@ -316,3 +316,24 @@ MIT
   - 别人怎么装：`dsh plugin add github:Num86/dsh-functions`
     （或在 DSH 的插件页填 GitHub 地址；市场里直接搜 dsh-functions 也行）
 
+---
+
+## 常见疑问：重启后任务栏里多出几个 DSH 图标？
+
+  **不是多开，也不是重启失败** —— 那是被关掉的旧进程留在系统托盘里的**残影**：
+
+  · 强制关闭的进程来不及把自己的托盘图标撤掉，Windows 会把它留在通知区；
+  · **鼠标划过（或点一下通知区）就会消失**，不影响使用；
+  · 真正的「多开」不会发生：本插件拉起的实例拿不到 Electron 的 single-instance 锁会立刻退出，
+    所以能看到的那个窗口永远只有一个。
+
+  顺带说明进程列表：运行中的 DSH 本来就同时有**多个** `DeepSeek Harness.exe`
+  （主进程 + Host 子进程 + 渲染/GPU/工具进程，Electron 的正常结构），这不是重启造成的。
+
+  验证真实实例（Windows）：
+
+      tasklist | findstr "DeepSeek Harness"
+
+  主进程（命令行里没有 `--type=` 的那个）与 Host 子进程（命令行含 `dsh-desktop-host`）各只有一个，
+  其余是渲染/GPU/工具进程。重启助手本身也会以同样的映像名出现几秒，那是它，不是新实例。
+

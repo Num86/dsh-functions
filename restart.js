@@ -398,9 +398,10 @@ export function apply(ctx, config = {}) {
           title: '重启 DSH',
           message: '重启会关闭当前的 DSH 进程，并在几秒后自动重新打开。',
           detail:
-            mode.mode === 'desktop'
+            (mode.mode === 'desktop'
               ? '桌面端：应用会被关闭后重新启动，随后自动打开；应用带起来的子进程（终端、后台任务等）也会一起结束。'
-              : '服务端：会用同样的命令重新拉起 DSH，本页面会自动重连。',
+              : '服务端：会用同样的命令重新拉起 DSH，本页面会自动重连。') +
+            '\n重启后：任务栏里可能短暂多出几个 DSH 图标——那是被关掉的旧进程留下的残影（不是多开，也不占资源），鼠标划过去就会消失。',
           confirmText: '继续',
           cancelText: '取消',
         };
@@ -421,6 +422,9 @@ export function apply(ctx, config = {}) {
         parts.push('无法确认是否有正在进行中的任务：' + work.reason);
       } else {
         parts.push('无法确认是否有正在进行中的任务（状态接口没应答）。');
+      }
+      if (mode.mode === 'desktop') {
+        parts.push('重启后：任务栏里可能短暂多出几个 DSH 图标——那是被关掉的旧进程留下的残影（不是多开，也不占资源），鼠标划过去就会消失。');
       }
       return {
         title: '确认重启',
