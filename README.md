@@ -23,6 +23,11 @@
 
 ![功能栏截图](assets/screenshot-1.png)
 
+重启后（0.5.0）：置顶的「加载功能」下面多了一条分隔线，和其余选项分开；
+「加载功能」的说明也补上了「也可以按你的描述直接加一条功能」。
+
+![功能栏截图（带分隔线）](assets/screenshot-2.png)
+
 **不 patch DSH 本体，不 require React，不引任何 Harness 客户端包** ——
 它就是一个普通插件：一行 Loader 条目 + 宿主半边 + 一个自带样式的客户端 bundle。
 
