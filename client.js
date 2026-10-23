@@ -457,6 +457,7 @@ window.__ModuleLoader__.load({
       .panelHead { padding: 6px 10px 8px; }
       .panelTitle { font-size: 13px; font-weight: 600; }
       .panelSubtitle { margin-top: 2px; font-size: 9.5px; color: var(--dsw-alias-label-tertiary, #8a8a8a); }
+      .pinnedDivider { margin: 4px 10px 6px; border-top: 0.5px solid var(--dsw-alias-border-l2, rgba(255,255,255,0.14)); }
       .groupLabel { padding: 6px 10px 4px; font-size: 9px; letter-spacing: 0.04em; color: var(--dsw-alias-label-tertiary, #8a8a8a); }
       .item { width: 100%; display: flex; align-items: baseline; gap: 12px; padding: 6px 10px; border: 0;
         border-radius: 8px; background: transparent; color: inherit; text-align: left; cursor: default; }
@@ -770,7 +771,18 @@ window.__ModuleLoader__.load({
         };
 
         let currentGroup = null;
+        let sawPinned = false;
+        let dividerDone = false;
         for (const entry of roots) {
+          if (entry.pinned === true) {
+            sawPinned = true;
+          } else if (sawPinned && !dividerDone) {
+            // 置顶的（加载功能）和其余选项之间画一条分隔线（人 2026-10-23 要求）
+            const divider = document.createElement('div');
+            divider.className = 'pinnedDivider';
+            panel.append(divider);
+            dividerDone = true;
+          }
           const group = entry.group.length > 0 ? entry.group : t('groupDefault');
           if (SHOW_GROUP_LABELS && group !== currentGroup) {
             currentGroup = group;
