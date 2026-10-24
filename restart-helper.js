@@ -29,7 +29,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -45,18 +45,37 @@ function usablePort(port) {
 
 /** 记一行日志；日志写不进去也绝不抛。 */
 function log(logPath, line) {
-  const text = '[' + new Date().toISOString() + '] ' + line + '\n';
-  try {
-    appendFileSync(logPath, text, 'utf8');
-  } catch (error) {
-    // 目录可能还不存在（配置把日志指到某个还没建的目录）：建一次再试。
-    try {
-      mkdirSync(dirname(logPath), { recursive: true });
-      appendFileSync(logPath, text, 'utf8');
-    } catch (retryError) {
-      /* 日志是诊断用的，实在写不进去就算了 */
-    }
-  }
+	const text = '[' + new Date().toISOString() + '] ' + line + String.fromCharCode(10);
+	try {
+		rotateLogIfNeeded(logPath);
+		mkdirSync(dirname(logPath), { recursive: true });
+		appendFileSync(logPath, text, 'utf8');
+	} catch {
+		/* 日志写不了也不能影响重启主流程 */
+	}
+}
+
+/** 日志超过 5 MB 就地轮转：x.log -> x.log.1 -> ... -> x.log.7（最老的丢）；失败不再抛。 */
+const LOG_MAX_BYTES = 5 * 1024 * 1024;
+const LOG_KEEP = 7;
+function rotateLogIfNeeded(file) {
+	try {
+		if (statSync(file).size < LOG_MAX_BYTES) return;
+	} catch {
+		return;
+	}
+	try {
+		for (let i = LOG_KEEP - 1; i >= 1; i -= 1) {
+			const from = file + '.' + i;
+			const to = file + '.' + (i + 1);
+			if (!existsSync(from)) continue;
+			try { rmSync(to, { force: true }); } catch { /* 删不掉就算了 */ }
+			try { renameSync(from, to); } catch { /* 挪不动就算了 */ }
+		}
+		try { renameSync(file, file + '.1'); } catch { /* 挪不动就算了 */ }
+	} catch {
+		/* 轮转失败不影响主流程 */
+	}
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
