@@ -31,6 +31,17 @@
 **不 patch DSH 本体，不 require React，不引任何 Harness 客户端包** ——
 它就是一个普通插件：一行 Loader 条目 + 宿主半边 + 一个自带样式的客户端 bundle。
 
+
+## 安装
+
+```sh
+# 从 npm 装（推荐，版本/下载量在 npm 页可见）
+dsh plugin --profile desktop add dsh-functions
+
+# 或者直接从 GitHub 装
+dsh plugin --profile desktop add github:Num86/dsh-functions
+```
+
 ## 装
 
 DSH → 插件 → 添加插件，填这个包的路径（tarball 或解包目录都行），然后**重启 DSH**
